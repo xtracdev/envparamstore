@@ -8,12 +8,15 @@ import (
 	"strings"
 	"github.com/aws/aws-sdk-go/aws"
 	"fmt"
+	"os/exec"
+	"os"
 )
 
 var (
 	prefix = kingpin.Flag("prefix", "Inject keys that match the given prefix").String()
 	leaveEncrypted = kingpin.Flag("leave-encrypted", "Do not decrypt parameter values").Bool()
 	command = kingpin.Flag("cmd", "Command to run").Required().Strings()
+	pristine = kingpin.Flag("pristine", "Do not inject surrounding process's environment").Bool()
 )
 
 func main() {
@@ -28,15 +31,45 @@ func main() {
 
 	svc := ssm.New(session)
 
-	cmdEnv,err := extractEnv(*prefix, *leaveEncrypted, svc)
+	paramStoreEnv,err := extractParamStoreEnv(*prefix, *leaveEncrypted, svc)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 
+	cmdEnv := getCommandEnv(*pristine, paramStoreEnv)
+
 	log.Infof("%v", cmdEnv)
+
+	err = runCommand(*command, cmdEnv)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 }
 
-func extractEnv(keyPrefix string, doNotDecrypt bool, svc *ssm.SSM) ([]string,error) {
+func getCommandEnv(pristine bool, paramStoreEnv []string) []string {
+	newEnv := make(map[string]string)
+
+	if !pristine {
+		for _, v := range os.Environ() {
+			list := strings.SplitN(v, "=", 2)
+			newEnv[list[0]] = list[1]
+		}
+	}
+
+	for _, v := range paramStoreEnv {
+		list := strings.SplitN(v, "=", 2)
+		newEnv[list[0]] = list[1]
+	}
+
+	var finalEnv []string
+	for k, v := range newEnv {
+		finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	return finalEnv
+}
+
+func extractParamStoreEnv(keyPrefix string, doNotDecrypt bool, svc *ssm.SSM) ([]string,error) {
 	var cmdEnv []string
 	var decryptFlag = !doNotDecrypt
 
@@ -87,4 +120,18 @@ func extractEnv(keyPrefix string, doNotDecrypt bool, svc *ssm.SSM) ([]string,err
 	}
 
 	return cmdEnv,nil
+}
+
+func runCommand(commandArgs []string, cmdEnv []string) error {
+	cmd := exec.Command(commandArgs[0], commandArgs[1:]...)
+	cmd.Env = cmdEnv
+	cmd.Stdout = os.Stdout
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = os.Stderr
+	err := cmd.Start()
+	if err != nil {
+		return err
+	}
+
+	return cmd.Wait()
 }
