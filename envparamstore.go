@@ -123,6 +123,7 @@ func extractParamStoreEnv(keyPrefix string, doNotDecrypt bool, svc *ssm.SSM) ([]
 }
 
 func runCommand(commandArgs []string, cmdEnv []string) error {
+	log.Infof("Run command with env %v", cmdEnv)
 	cmd := exec.Command(commandArgs[0], commandArgs[1:]...)
 	cmd.Env = cmdEnv
 	cmd.Stdout = os.Stdout
